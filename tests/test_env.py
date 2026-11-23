@@ -50,6 +50,32 @@ def test_propose_mask_matches_quest_size():
         env.step(TEAM_INDEX[(0, 1, 2)])
 
 
+@pytest.mark.parametrize("action", [-7, -27, 27, 20.0, 20.9, "20", True, np.bool_(True)])
+def test_invalid_action_cannot_consume_or_change_a_vote(action):
+    env = new_env()
+    env.step(np.int64(TEAM_INDEX[(0, 1)]))
+    with pytest.raises(ValueError):
+        env.step(action)
+    assert env.current_player() == 0
+    vote_all(env, True)
+    assert env.history[-1].votes == (True,) * 5
+
+
+def test_quest_cards_are_hidden_and_the_published_count_is_anonymous():
+    games = [new_env(), new_env()]
+    for env, first in zip(games, (A_FAIL, A_SUCCESS)):
+        env.step(TEAM_INDEX[(3, 4)])
+        vote_all(env, True)
+        env.step(first)
+        assert env.current_player() == 4
+    for mode in ("none", "deductive", "oracle"):
+        np.testing.assert_array_equal(encode(games[0], 4, mode), encode(games[1], 4, mode))
+    for env, second in zip(games, (A_SUCCESS, A_FAIL)):
+        env.step(second)
+        assert env.history[-1].fails == 1
+    assert games[0].history == games[1].history
+
+
 def test_majority_needed():
     env = new_env()
     env.step(TEAM_INDEX[(0, 1)])

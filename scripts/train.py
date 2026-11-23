@@ -10,7 +10,6 @@ import json
 import time
 from pathlib import Path
 
-import numpy as np
 import torch
 
 from avalon.belief import CONDITIONS
@@ -47,7 +46,14 @@ def main():
     torch.manual_seed(args.seed)
     run = Path(args.out) / f"{args.condition}_s{args.seed}{args.tag}"
     run.mkdir(parents=True, exist_ok=True)
-    (run / "config.json").write_text(json.dumps(vars(args), indent=2))
+    if any(run.iterdir()):
+        ap.error(f"{run} already contains a run. Choose a new --out or --tag.")
+    try:
+        config = (run / "config.json").open("x")
+    except FileExistsError:
+        ap.error(f"Another trainer claimed {run}. Choose a new --out or --tag.")
+    with config:
+        json.dump(dict(vars(args), rollout_method="complete_games"), config, indent=2)
 
     model = ActorCritic()
     opt = torch.optim.Adam(model.parameters(), lr=args.lr, eps=1e-5)
@@ -62,7 +68,7 @@ def main():
 
     t0, steps, update = time.time(), 0, 0
     while steps < args.steps:
-        batch = collector.collect(args.batch)
+        batch = collector.collect(min(args.batch, args.steps - steps))
         steps += len(batch["act"])
         metrics = ppo_update(model, opt, batch, args.epochs, args.minibatch, args.clip, args.ent)
         update += 1
@@ -83,8 +89,12 @@ def main():
         w.writerow({k: (round(v, 5) if isinstance(v, float) else v) for k, v in row.items()})
         f.flush()
 
-    torch.save(model.state_dict(), run / "model.pt")
     f.close()
+    # A reader can use model.pt as a completion marker, including during a run.
+    final = run / "model.pt"
+    pending = run / "model.pt.tmp"
+    torch.save(model.state_dict(), pending)
+    pending.replace(final)
     print(f"[{run.name}] done in {(time.time() - t0) / 60:.1f} min", flush=True)
 
 

@@ -5,6 +5,7 @@ so they always get the truth.
 """
 
 from itertools import combinations
+from math import comb
 
 import numpy as np
 
@@ -76,9 +77,18 @@ def bayesian_from(seat, history, q_evil=0.8, q_merlin=0.8, q_fail=0.8):
         n_evil = E[:, team].sum(1)
         clean = n_evil == 0
 
-        if p.leader != seat:  # Merlin proposes clean teams
-            pm = np.where(clean, q_merlin, 1 - q_merlin)
-            logw += np.log(M[:, p.leader] * pm + (1 - M[:, p.leader]))
+        if p.leader != seat:
+            # Condition on whether the leader included themselves. Other roles
+            # choose uniformly within that set. Merlin distributes q_merlin
+            # over the clean teams and the remaining mass over the dirty ones.
+            picks = len(team) - int(p.leader in team)
+            n_teams = comb(N_PLAYERS - 1, picks)
+            n_clean = comb(2, picks)  # Merlin has two other good players to choose from.
+            if n_clean:
+                merlin_ratio = np.where(clean, q_merlin * n_teams / n_clean,
+                                        (1 - q_merlin) * n_teams / (n_teams - n_clean))
+                logw += np.log(np.where(M[:, p.leader], merlin_ratio, 1.0))
+            # If no clean team exists, every role assigns the same likelihood.
 
         if p.attempt < 4:
             for i, approve in enumerate(p.votes):

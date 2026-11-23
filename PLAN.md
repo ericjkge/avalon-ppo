@@ -81,12 +81,12 @@ How much does explicit belief modeling help self-play PPO in a hidden-role game?
 
 **Calibration target:** good wins 25–45% with Hard bots in every seat (DeepRole: 34% in all-DeepRole games, 40% human-only).
 
-Good win rate, 2000 games per cell (±0.02); rows = good tier, columns = evil tier:
+Good win rate with the corrected proposal likelihood, 2000 games per cell using `scripts.bot_table --seed 0`. Rows are good tiers and columns are evil tiers.
 | | Easy | Medium | Hard |
 |---|---|---|---|
 | Easy | 0.01 | 0.01 | 0.04 |
 | Medium | 0.15 | 0.01 | 0.02 |
-| Hard | 0.41 | 0.35 | **0.39** |
+| Hard | 0.42 | 0.36 | **0.42** |
 
 Known limits: Medium good is near the floor; Hard evil isn't stronger than Medium evil against Hard good. Only Hard bots are used for evaluation.
 
@@ -96,7 +96,7 @@ Known limits: Medium good is near the floor; Hard evil isn't stronger than Mediu
 |---|---|---|
 | A (main result) | all good seats | all evil seats |
 | B | all evil seats | all good seats |
-| Reference | — | all seats (good wins 39%) |
+| Reference | — | all seats (good wins 42.25% at evaluation seed 123) |
 
 **Caveat:** Hard good bots use their own Bayesian belief, which affects how to read Setup B.
 
@@ -107,5 +107,5 @@ Known limits: Medium good is near the floor; Hard evil isn't stronger than Mediu
 - [x] Evaluation code (A / B / Reference, CIs)
 - [x] Sanity check: bot-vs-bot tables, calibration
 - [x] PPO + opponent pool
-- [x] 9 training runs
-- [x] Final evaluation
+- [ ] Repeat the 9 full training runs with complete-game PPO rollouts (initial runs in LOG.md)
+- [ ] Evaluate those checkpoints against corrected Hard bots and report matched-seed differences

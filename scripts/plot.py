@@ -7,8 +7,6 @@ Usage: python -m scripts.plot [--tier hard]
 
 import argparse
 import csv
-import json
-from collections import defaultdict
 from pathlib import Path
 
 import matplotlib
@@ -17,78 +15,83 @@ matplotlib.use("Agg")
 import matplotlib.pyplot as plt  # noqa: E402
 import numpy as np  # noqa: E402
 
-from avalon.evaluate import wilson_ci  # noqa: E402
+from avalon.evaluate import rates_by_seed  # noqa: E402
 
 COND = ["none", "deductive", "oracle"]
 LABEL = {"none": "No belief", "deductive": "Deductive", "oracle": "Oracle"}
 COLOR = {"none": "#8a8f98", "deductive": "#3b6fd8", "oracle": "#e0883a"}
 
 
-def bars(tier, out):
-    rows = list(csv.DictReader(open(f"results/csv/eval_{tier}.csv")))
-    agg = defaultdict(lambda: [0, 0, []])
-    for r in rows:
-        a = agg[(r["condition"], r["setup"])]
-        a[0] += int(r["wins"])
-        a[1] += int(r["n"])
-        a[2].append(float(r["rate"]))
+def bars(tier, out, rows):
+    agg = rates_by_seed(rows)
+    conditions = [c for c in COND if (c, "A") in agg]
     fig, axes = plt.subplots(1, 2, figsize=(10, 4.2), sharey=True)
     titles = {"A": "Setup A: PPO plays good", "B": "Setup B: PPO plays evil"}
     for ax, setup in zip(axes, ("A", "B")):
-        for j, c in enumerate(COND):
-            if (c, setup) not in agg:
-                continue
-            wins, n, rates = agg[(c, setup)]
-            lo, hi = wilson_ci(wins, n)
-            p = wins / n
-            ax.bar(j, p, color=COLOR[c], width=0.6)
-            ax.errorbar(j, p, yerr=[[p - lo], [hi - p]], color="black", capsize=4, lw=1)
-            ax.scatter([j] * len(rates), rates, color="black", s=12, zorder=3, alpha=0.6)
-            ax.text(j, hi + 0.015, f"{p:.2f}", ha="center", fontsize=10)
+        for j, c in enumerate(conditions):
+            per_seed = agg[c, setup]
+            rates = [per_seed[s] for s in sorted(per_seed)]
+            mean = np.mean(rates)
+            ax.bar(j, mean, color=COLOR[c], width=0.6, label="Seed mean" if j == 0 else None)
+            offsets = np.linspace(-0.12, 0.12, len(rates)) if len(rates) > 1 else np.zeros(1)
+            ax.scatter(j + offsets, rates, color="black", s=16, zorder=3, clip_on=False,
+                       label="Training seed" if j == 0 else None)
         ref = agg.get(("bots", setup))
         if ref:
-            ax.axhline(ref[0] / ref[1], color="black", ls="--", lw=1)
-            ax.text(-0.45, ref[0] / ref[1] + 0.015, f"{tier} bots: {ref[0] / ref[1]:.2f}", fontsize=8, ha="left")
-        ax.set_xticks(range(3), [LABEL[c] for c in COND])
+            ax.axhline(ref["-"], color="black", ls="--", lw=1, label=f"{tier.title()} bots")
+        ax.set_xticks(range(len(conditions)), [LABEL[c] for c in conditions])
         ax.set_title(titles[setup])
         ax.set_ylim(0, 1)
         ax.spines[["top", "right"]].set_visible(False)
     axes[0].set_ylabel(f"PPO-side win rate vs {tier} bots")
-    fig.tight_layout()
+    handles, labels = axes[0].get_legend_handles_labels()
+    fig.legend(handles, labels, loc="lower center", ncol=3, frameon=False)
+    fig.tight_layout(rect=(0, 0.10, 1, 1))
     fig.savefig(out / f"winrate_{tier}.png", dpi=200)
+    plt.close(fig)
     print("wrote", out / f"winrate_{tier}.png")
 
 
-def curves(out, runs="results/runs"):
+def curves(out, runs, evaluated):
     fig, axes = plt.subplots(1, 2, figsize=(10, 4), sharey=True)
-    for run in sorted(Path(runs).iterdir()):
-        if not (run / "log.csv").exists():
+    labelled = set()
+    for cell in evaluated:
+        c = cell["condition"]
+        if c == "bots" or cell["setup"] != "A":
             continue
-        c = json.loads((run / "config.json").read_text())["condition"]
-        rows = [r for r in csv.DictReader(open(run / "log.csv")) if r["evalA"]]
+        run = runs / (cell.get("run") or f"{c}_s{cell['seed']}")
+        with (run / "log.csv").open(newline="") as f:
+            rows = [r for r in csv.DictReader(f) if r["evalA"]]
         x = np.array([int(r["steps"]) for r in rows]) / 1e6
         for ax, key in zip(axes, ("evalA", "evalB")):
             ax.plot(x, [float(r[key]) for r in rows], color=COLOR[c], alpha=0.8, lw=1.2,
-                    label=LABEL[c] if run.name.endswith("_s0") else None)
+                    label=LABEL[c] if c not in labelled else None)
+        labelled.add(c)
     for ax, t in zip(axes, ("Setup A: PPO plays good", "Setup B: PPO plays evil")):
         ax.set_title(t)
         ax.set_xlabel("training decisions (millions)")
+        ax.locator_params(axis="x", nbins=5)
         ax.spines[["top", "right"]].set_visible(False)
     axes[0].set_ylabel("win rate vs bots (eval during training)")
     axes[0].legend(frameon=False)
     fig.tight_layout()
     fig.savefig(out / "curves.png", dpi=200)
+    plt.close(fig)
     print("wrote", out / "curves.png")
 
 
 def main():
     ap = argparse.ArgumentParser()
     ap.add_argument("--tier", default="hard")
+    ap.add_argument("--runs", type=Path, default=Path("results/runs"))
+    ap.add_argument("--csv-dir", type=Path, default=Path("results/csv"))
+    ap.add_argument("--out", type=Path, default=Path("results/figures"))
     args = ap.parse_args()
-    out = Path("results/figures")
-    out.mkdir(parents=True, exist_ok=True)
-    bars(args.tier, out)
-    curves(out)
+    args.out.mkdir(parents=True, exist_ok=True)
+    with (args.csv_dir / f"eval_{args.tier}.csv").open(newline="") as f:
+        rows = list(csv.DictReader(f))
+    bars(args.tier, args.out, rows)
+    curves(args.out, args.runs, rows)
 
 
 if __name__ == "__main__":

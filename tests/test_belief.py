@@ -73,3 +73,24 @@ def test_bayesian_reads_votes():
 def test_bayesian_pending_vote_ignored():
     p = Proposal(0, 0, 1, (1, 4))
     np.testing.assert_allclose(bayesian_from(0, [p])[0], bayesian_from(0, [])[0])
+
+
+@pytest.mark.parametrize("team,q_clean", [
+    ((1, 2), 1/2), ((1, 2, 3), 1/6),  # leader included
+    ((2, 3), 1/6), ((0, 2, 3), 0.55),  # leader excluded, clean triple impossible for Merlin
+])
+def test_uniform_proposal_likelihood_preserves_prior(team, q_clean):
+    # Fifth-attempt votes give no evidence. A uniform distribution over teams
+    # under every role hypothesis should give no evidence about the proposer.
+    p = Proposal(0, 4, 1, team, votes=(True,) * 5, approved=True)
+    actual = bayesian_from(0, [p], q_merlin=q_clean)
+    np.testing.assert_allclose(actual, bayesian_from(0, []), atol=1e-6)
+
+
+def test_proposal_of_only_clean_triple_increases_merlin_probability():
+    known_evil = Proposal(0, 0, 0, (3, 4), votes=(True,) * 5, approved=True, fails=2)
+    clean = Proposal(1, 0, 1, (0, 1, 2), votes=(True,) * 5, approved=True)
+    _, before = bayesian_from(0, [known_evil], q_merlin=.55)
+    _, after = bayesian_from(0, [known_evil, clean], q_merlin=.55)
+    assert before[1] == pytest.approx(.5)
+    assert after[1] == pytest.approx(.55 / (.55 + 1/6))

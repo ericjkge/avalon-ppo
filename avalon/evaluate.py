@@ -1,6 +1,7 @@
 """Game runner and win-rate helpers."""
 
 import math
+from collections import defaultdict
 
 import numpy as np
 import torch
@@ -10,6 +11,19 @@ from .env import AvalonEnv, EVIL, GOOD
 from .obs import encode
 
 SETUPS = ("A", "B")  # A: PPO plays good vs bot evil; B: PPO plays evil vs bot good
+
+
+def rates_by_seed(rows):
+    """Group evaluation counts by independent training run, including older CSV files."""
+    rates = defaultdict(dict)
+    for row in rows:
+        condition = row["condition"]
+        seed = "-" if condition == "bots" else int(row["seed"])
+        group = rates[condition, row["setup"]]
+        if seed in group:
+            raise ValueError(f"Duplicate {condition} seed {seed} in setup {row['setup']}")
+        group[seed] = int(row["wins"]) / int(row["n"])
+    return rates
 
 
 class PolicyAgent:

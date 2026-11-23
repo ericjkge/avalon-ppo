@@ -18,6 +18,8 @@ class Collector:
     Only decisions made by the current network are kept for training."""
 
     def __init__(self, model, pool, condition, n_envs, seed, p_selfplay=0.5, gamma=1.0, lam=0.95):
+        if n_envs < 1:
+            raise ValueError("n_envs must be positive")
         self.model, self.pool, self.condition = model, pool, condition
         self.rng = np.random.default_rng(seed)
         self.envs = [AvalonEnv(seed * 10_000 + i) for i in range(n_envs)]
@@ -25,8 +27,6 @@ class Collector:
         self.ctrl = [None] * n_envs
         self.traj = [None] * n_envs
         self.stats = defaultdict(int)
-        for i in range(n_envs):
-            self._reset(i)
 
     def _reset(self, i):
         env = self.envs[i].reset()
@@ -50,7 +50,6 @@ class Collector:
             cur_seat = self.ctrl[i].index(CURRENT)
             self.stats["pool_games"] += 1
             self.stats["pool_cur_wins"] += env.winner == env.side(cur_seat)
-        n = 0
         for seat in range(N_PLAYERS):
             t = self.traj[i][seat]
             if not t:
@@ -72,17 +71,22 @@ class Collector:
                 out["logp"].append(lp)
                 out["adv"].append(adv[k])
                 out["ret"].append(adv[k] + values[k])
-            n += len(t)
-        self._reset(i)
-        return n
+            t.clear()
 
     @torch.no_grad()
     def collect(self, n_steps):
+        """Collect at least n_steps current-policy decisions, finishing every started game."""
+        if n_steps < 1:
+            raise ValueError("n_steps must be positive")
         out = defaultdict(list)
         steps = 0
-        while steps < n_steps:
+        active = list(range(len(self.envs)))
+        for i in active:
+            self._reset(i)
+        while active:
             groups = defaultdict(list)
-            for i, env in enumerate(self.envs):
+            for i in active:
+                env = self.envs[i]
                 seat = env.current_player()
                 groups[id(self.ctrl[i][seat])].append(
                     (i, seat, encode(env, seat, self.condition), env.legal_mask()))
@@ -97,14 +101,23 @@ class Collector:
                 dist = Categorical(logits=logits)
                 a = dist.sample()
                 logp = dist.log_prob(a)
+                if ctrl is CURRENT:
+                    steps += len(items)
                 for j, (i, seat, o, m) in enumerate(items):
                     actions[i] = int(a[j])
                     if ctrl is CURRENT:
                         self.traj[i][seat].append((o, m, int(a[j]), float(logp[j]), float(values[j])))
-            for i, env in enumerate(self.envs):
+            next_active = []
+            for i in active:
+                env = self.envs[i]
                 env.step(actions[i])
                 if env.done:
-                    steps += self._finish(i, out)
+                    self._finish(i, out)
+                    if steps >= n_steps:
+                        continue
+                    self._reset(i)
+                next_active.append(i)
+            active = next_active
         batch = {
             "obs": torch.from_numpy(np.stack(out["obs"])),
             "mask": torch.from_numpy(np.stack(out["mask"])),

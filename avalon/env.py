@@ -8,6 +8,7 @@ automatically, so the env only asks for real decisions.
 
 from dataclasses import dataclass
 from itertools import combinations
+from operator import index
 
 import numpy as np
 
@@ -112,10 +113,15 @@ class AvalonEnv:
 
     # ---- transitions ---------------------------------------------------
     def step(self, action):
-        action = int(action)
         if self.done:
             raise RuntimeError("game is over")
-        if not self.legal_mask()[action]:
+        if isinstance(action, (bool, np.bool_)):
+            raise ValueError("action must be an integer action ID")
+        try:
+            action = index(action)
+        except TypeError as exc:
+            raise ValueError("action must be an integer action ID") from exc
+        if not 0 <= action < N_ACTIONS or not self.legal_mask()[action]:
             raise ValueError(f"illegal action {action} in phase {self.phase}")
         seat = self._queue.pop(0)
 
