@@ -2,7 +2,7 @@
 
 A CS 1840 mini project. We train agents to play 5-player Avalon by self-play with three methods from the course (PPO, REINFORCE, DQN) and compare the strategies they end up with.
 
-**Question:** Avalon rewards players who hide what they know. Does self-play RL discover that, and does it depend on the training method?
+**Question:** Good Avalon play is balanced: players mix their actions so their role cannot be read. Which self-play RL methods learn balanced play, and what do the others learn instead?
 
 **Independent variable:** the training method (plus two single-change variants of PPO).
 **Dependent variables:** how readable each agent's hidden role is, how exploitable the agent is, and how it fares against the other agents.
@@ -16,12 +16,14 @@ Two facts about how Avalon is played well motivate the design.
 1. **Good strategies are mixed.** A Merlin who rejects every team containing an evil player wins quests but is identified and assassinated. An evil player who only approves teams with evil on them is identified by their votes. Each role has to randomize between using its knowledge and concealing it.
 2. **Servants have to be candidate Merlins.** The Assassin picks one of three good players. Good does best when the three are indistinguishable. That takes Merlin acting less informed *and* Servants acting more informed than they are.
 
-The methods differ in whether they can represent this:
+These hold for any player, human or learned, so they give us a yardstick that does not depend on the training method. For every agent we ask the same two things:
 
-- **PPO and REINFORCE** output a probability for every action, so they can play a mixed strategy.
-- **DQN** acts greedily on its Q-values, so it plays the same action every time it is in the same situation. A Merlin and a Servant with the same public history may then act differently in a consistent way, which is what an Assassin needs.
+- **Is it balanced?** Where the game calls for mixing, does the agent randomize, or does it always take the same action?
+- **Is its good team indistinguishable?** Can an observer tell Merlin from the Servants by how they vote, propose and talk?
 
-So the prediction to test is that a DQN agent's role is easier to read than a PPO agent's.
+Win rate alone cannot answer either. An agent can win often against the opponents it trained with while being easy to read, and a better opponent would then beat it. That is why the comparison below rests on behavior and exploitability as well as on wins.
+
+The methods are worth comparing on this yardstick because they are built differently. PPO and REINFORCE output a probability for every action. DQN acts greedily on its Q-values, so it takes the same action every time it is in the same situation. Whether that difference shows up in how balanced the learned players are is one of the things the experiment measures.
 
 ## The game
 
