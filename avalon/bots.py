@@ -8,8 +8,8 @@ import numpy as np
 
 from .belief import bayesian_from
 from .env import (
-    A_APPROVE, A_ASSASSINATE, A_FAIL, A_REJECT, A_SUCCESS, ASSASSINATE,
-    MAX_ATTEMPTS, MERLIN, N_PLAYERS, PROPOSE, QUEST, TEAM_INDEX, TEAMS, VOTE,
+    A_APPROVE, A_ASSASSINATE, A_FAIL, A_PASS, A_REJECT, A_RES, A_SUCCESS, A_SUS, ASSASSINATE,
+    MAX_ATTEMPTS, MERLIN, N_PLAYERS, PROPOSE, QUEST, TALK, TEAM_INDEX, TEAMS, VOTE,
     is_evil_role,
 )
 
@@ -57,6 +57,8 @@ class Bot:
         seat = env.current_player()
         if env.phase == PROPOSE:
             return self._propose(env, seat)
+        if env.phase == TALK:
+            return self._talk(env, seat)
         if env.phase == VOTE:
             return self._vote(env, seat)
         if env.phase == QUEST:
@@ -97,6 +99,30 @@ class Bot:
             score = self._belief(env, seat) + 0.01 * vote_suspicion(env)
             pick = self._lowest(others, score, k - 1)
         return TEAM_INDEX[tuple(sorted([seat] + [int(i) for i in pick]))]
+
+    def _talk(self, env, seat, sus_at=0.6, res_at=0.15):
+        """Say what a Servant in this seat would say. Evil never accuses its partner.
+        Bots speak but do not listen: statements never enter their beliefs."""
+        if self.tier == EASY:
+            return A_PASS
+        others = [i for i in range(N_PLAYERS) if i != seat]
+        if is_evil_role(env.roles[seat]):
+            accusable = [i for i in others if i not in env.evil]
+        else:
+            accusable = others
+        if self.tier == MEDIUM:
+            s = vote_suspicion(env)
+            worst = self._lowest(accusable, -s, 1)[0]
+            return A_SUS + worst if s[worst] >= 1 else A_PASS
+        with np.errstate(invalid="ignore"):
+            b = self._belief(env, seat)
+        if not np.isfinite(b).all():
+            return A_PASS  # an evil seat whose own Fail cards no Servant could explain
+        worst = self._lowest(accusable, -b, 1)[0]
+        if b[worst] >= sus_at:
+            return A_SUS + worst
+        best = self._lowest(others, b, 1)[0]
+        return A_RES + best if b[best] <= res_at else A_PASS
 
     def _vote(self, env, seat):
         team = list(env.team)

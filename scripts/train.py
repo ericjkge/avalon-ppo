@@ -1,6 +1,7 @@
-"""Train one self-play PPO run.
+"""Train one self-play run.
 
-Usage: python -m scripts.train --condition {none,deductive,oracle} --seed N [--steps 3000000]
+Usage: python -m scripts.train [--algo {ppo,reinforce}] [--no-talk] [--quest-bonus 0.2]
+                            [--condition deductive] --seed N --tag _name [--steps 3000000]
 Writes results/runs/<condition>_s<seed>/{config.json, log.csv, model.pt, ckpt_*.pt}
 """
 
@@ -21,7 +22,11 @@ from avalon.ppo import Collector, ppo_update
 
 def main():
     ap = argparse.ArgumentParser()
-    ap.add_argument("--condition", choices=CONDITIONS, required=True)
+    ap.add_argument("--condition", choices=CONDITIONS, default="deductive")
+    ap.add_argument("--algo", choices=("ppo", "reinforce"), default="ppo",
+                    help="reinforce: one unclipped pass per batch with Monte Carlo returns")
+    ap.add_argument("--no-talk", dest="talk", action="store_false")
+    ap.add_argument("--quest-bonus", type=float, default=0.2)
     ap.add_argument("--seed", type=int, default=0)
     ap.add_argument("--steps", type=int, default=3_000_000)
     ap.add_argument("--n-envs", type=int, default=64)
@@ -58,7 +63,9 @@ def main():
     model = ActorCritic()
     opt = torch.optim.Adam(model.parameters(), lr=args.lr, eps=1e-5)
     pool = OpponentPool(args.pool_every, args.pool_size)
-    collector = Collector(model, pool, args.condition, args.n_envs, args.seed, args.p_selfplay)
+    reinforce = args.algo == "reinforce"
+    collector = Collector(model, pool, args.condition, args.n_envs, args.seed, args.p_selfplay,
+                          lam=1.0 if reinforce else 0.95, talk=args.talk, quest_bonus=args.quest_bonus)
 
     fields = ["update", "steps", "minutes", "selfplay_good_wr", "pool_cur_wr", "pg_loss", "v_loss",
               "entropy", "approx_kl", "clipfrac", "evalA", "evalB"]
@@ -70,7 +77,8 @@ def main():
     while steps < args.steps:
         batch = collector.collect(min(args.batch, args.steps - steps))
         steps += len(batch["act"])
-        metrics = ppo_update(model, opt, batch, args.epochs, args.minibatch, args.clip, args.ent)
+        metrics = ppo_update(model, opt, batch, 1 if reinforce else args.epochs, args.minibatch,
+                             None if reinforce else args.clip, args.ent)
         update += 1
         pool.maybe_add(update, model)
         s = collector.pop_stats()
@@ -80,7 +88,7 @@ def main():
         if update % args.eval_every == 0 or steps >= args.steps:
             for setup in ("A", "B"):
                 wins, n = setup_win_rate(model, args.condition, setup, args.eval_tier,
-                                         args.eval_games, seed=10_000 + update)
+                                         args.eval_games, seed=10_000 + update, talk=args.talk)
                 row[f"eval{setup}"] = wins / n
             torch.save(model.state_dict(), run / f"ckpt_{update:05d}.pt")
             print(f"[{run.name}] upd {update} steps {steps} {row['minutes']}m "

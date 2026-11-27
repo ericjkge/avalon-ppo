@@ -3,10 +3,12 @@
 import numpy as np
 
 from .belief import belief_input
-from .env import MAX_ATTEMPTS, N_PHASES, N_PLAYERS, N_QUESTS, N_ROLES, SERVANT
+from .env import A_PASS, A_RES, A_SUS, MAX_ATTEMPTS, N_PHASES, N_PLAYERS, N_QUESTS, N_ROLES, SERVANT
 
 N_SLOTS = N_QUESTS * MAX_ATTEMPTS  # one history slot per possible proposal
-SLOT_DIM = N_PLAYERS * 3 + 2  # leader, team, votes, approved, fails / 2
+VOTE_DIM = N_PLAYERS * 3 + 2  # leader, team, votes, approved, fails / 2
+TALK_DIM = N_PLAYERS + N_PLAYERS * N_PLAYERS  # has spoken; speaker x target, -1 sus / +1 res
+SLOT_DIM = VOTE_DIM + TALK_DIM
 
 SECTIONS = (
     ("role", N_ROLES),
@@ -57,9 +59,8 @@ def encode(env, seat, condition):
             put("proposed_team", i)
     for q in range(N_QUESTS):
         if q < len(env.quest_fails):
-            f = env.quest_fails[q]
-            put("quest_outcome", q * 3 + (1 if f > 0 else 0))
-            put("quest_fails", q, f / 2)
+            put("quest_outcome", q * 3 + int(env.quest_failed[q]))
+            put("quest_fails", q, env.quest_fails[q] / 2)
         else:
             put("quest_outcome", q * 3 + 2)
 
@@ -74,6 +75,11 @@ def encode(env, seat, condition):
         x[base + 3 * N_PLAYERS] = float(p.approved)
         if p.fails is not None:
             x[base + 3 * N_PLAYERS + 1] = p.fails / 2
+        for s, a in p.talk.items():
+            x[base + VOTE_DIM + s] = 1.0
+            if a != A_PASS:
+                sign, target = (-1.0, a - A_SUS) if a < A_RES else (1.0, a - A_RES)
+                x[base + VOTE_DIM + N_PLAYERS * (1 + s) + target] = sign
 
     x[OFFSETS["belief"]] = belief_input(env, seat, condition)
     return x

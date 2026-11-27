@@ -2,9 +2,9 @@ import numpy as np
 import pytest
 
 from avalon.env import (
-    A_APPROVE, A_ASSASSINATE, A_FAIL, A_REJECT, A_SUCCESS, ASSASSIN, ASSASSINATE,
-    AvalonEnv, EVIL, GOOD, MERLIN, MINION, PROPOSE, QUEST, SERVANT, TEAM_INDEX,
-    TEAMS, VOTE,
+    A_APPROVE, A_ASSASSINATE, A_FAIL, A_PASS, A_REJECT, A_RES, A_SUCCESS, A_SUS, ASSASSIN,
+    ASSASSINATE, AvalonEnv, EVIL, GOOD, MERLIN, MINION, PROPOSE, QUEST, SERVANT, TALK,
+    TEAM_INDEX, TEAMS, VOTE,
 )
 from avalon.obs import OBS_DIM, encode
 
@@ -12,8 +12,8 @@ from avalon.obs import OBS_DIM, encode
 ROLES = (MERLIN, SERVANT, SERVANT, ASSASSIN, MINION)
 
 
-def new_env(leader=0):
-    return AvalonEnv(0).reset(roles=ROLES, leader=leader)
+def new_env(leader=0, talk=False):
+    return AvalonEnv(0, talk=talk).reset(roles=ROLES, leader=leader)
 
 
 def vote_all(env, approve):
@@ -50,7 +50,7 @@ def test_propose_mask_matches_quest_size():
         env.step(TEAM_INDEX[(0, 1, 2)])
 
 
-@pytest.mark.parametrize("action", [-7, -27, 27, 20.0, 20.9, "20", True, np.bool_(True)])
+@pytest.mark.parametrize("action", [-7, -27, 27, 38, 20.0, 20.9, "20", True, np.bool_(True)])
 def test_invalid_action_cannot_consume_or_change_a_vote(action):
     env = new_env()
     env.step(np.int64(TEAM_INDEX[(0, 1)]))
@@ -89,13 +89,54 @@ def test_majority_needed():
     assert env.quest_fails == [0] and env.quest == 1 and env.attempt == 0
 
 
-def test_five_rejections_evil_wins():
+def test_five_rejections_fail_the_quest_and_play_continues():
     env = new_env()
     for _ in range(5):
         env.step(TEAM_INDEX[(0, 1)])
         vote_all(env, False)
-    assert env.done and env.winner == EVIL and env.win_reason == "five_rejections"
+    assert not env.done and env.phase == PROPOSE
+    assert env.quest == 1 and env.attempt == 0 and env.leader == 0
+    assert env.quest_failed == [True] and env.quest_fails == [0]
+    assert env.quests_won(3) == 1 and env.quests_won(0) == 0
+    assert all(p.fails is None for p in env.history)
+    for _ in range(10):
+        env.step(TEAM_INDEX[(0, 1, 2)] if env.team_size() == 3 else TEAM_INDEX[(0, 1)])
+        vote_all(env, False)
+    assert env.done and env.winner == EVIL and env.win_reason == "three_fails"
     assert env.reward(3) == 1 and env.reward(0) == -1
+
+
+def test_talk_round_is_optional_public_and_every_seat_speaks_once():
+    env = new_env(talk=True)
+    env.step(TEAM_INDEX[(0, 1)])
+    assert env.phase == TALK and env.team == (0, 1)
+    order = list(env._queue)
+    assert sorted(order) == [0, 1, 2, 3, 4]
+    first, second = order[0], order[1]
+    m = env.legal_mask()
+    assert m[A_PASS] and not m[:A_PASS].any()
+    assert not m[A_SUS + first] and not m[A_RES + first] and m.sum() == 9
+    with pytest.raises(ValueError):
+        env.step(A_SUS + first)
+    before = encode(env, second, "none")
+    env.step(A_SUS + second)
+    assert env.current_player() == second
+    assert (encode(env, second, "none") != before).sum() == 2  # spoke bit and the accusation
+    env.step(A_PASS)
+    for _ in range(3):
+        env.step(A_RES + first if env.current_player() != first else A_PASS)
+    assert env.phase == VOTE and env.history[-1].talk[first] == A_SUS + second
+    assert len(env.history[-1].talk) == 5
+
+
+def test_talk_order_varies():
+    env = AvalonEnv(5)
+    orders = set()
+    for _ in range(30):
+        env.reset()
+        env.step(int(np.flatnonzero(env.legal_mask())[0]))
+        orders.add(tuple(env._queue))
+    assert len(orders) > 10
 
 
 def test_only_evil_asked_on_quest():
@@ -147,6 +188,6 @@ def test_random_games_finish():
                 break
             env.step(rng.choice(np.flatnonzero(env.legal_mask())))
             if not env.done:
-                assert env.phase in (PROPOSE, VOTE, QUEST, ASSASSINATE)
+                assert env.phase in (PROPOSE, TALK, VOTE, QUEST, ASSASSINATE)
                 encode(env, env.current_player(), "deductive")
         assert env.done

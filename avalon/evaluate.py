@@ -27,10 +27,11 @@ def rates_by_seed(rows):
 
 
 class PolicyAgent:
-    """Wraps a trained network so it can play a seat. Samples from the policy."""
+    """Wraps a trained network so it can play a seat. Samples from the policy,
+    or takes the highest output when `greedy` (for Q-networks)."""
 
-    def __init__(self, model, condition, rng):
-        self.model, self.condition, self.rng = model, condition, rng
+    def __init__(self, model, condition, rng, greedy=False):
+        self.model, self.condition, self.rng, self.greedy = model, condition, rng, greedy
 
     @torch.no_grad()
     def act(self, env):
@@ -38,16 +39,18 @@ class PolicyAgent:
         obs = torch.from_numpy(encode(env, seat, self.condition))[None]
         mask = torch.from_numpy(env.legal_mask())[None]
         logits, _ = self.model(obs, mask)
+        if self.greedy:
+            return int(logits[0].argmax())
         p = torch.softmax(logits[0], -1).numpy().astype(np.float64)
         return int(self.rng.choice(len(p), p=p / p.sum()))
 
 
-def setup_win_rate(model, condition, setup, tier, n_games, seed=0):
+def setup_win_rate(model, condition, setup, tier, n_games, seed=0, talk=True, greedy=False):
     """Win rate of the PPO side in Setup A or B against `tier` bots."""
     rng = np.random.default_rng(seed)
-    agent, bot = PolicyAgent(model, condition, rng), Bot(tier, rng)
+    agent, bot = PolicyAgent(model, condition, rng, greedy), Bot(tier, rng)
     ppo_side = GOOD if setup == "A" else EVIL
-    env = AvalonEnv(seed)
+    env = AvalonEnv(seed, talk=talk)
     wins = 0
     model.eval()
     for _ in range(n_games):

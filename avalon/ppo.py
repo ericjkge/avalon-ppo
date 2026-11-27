@@ -17,13 +17,15 @@ class Collector:
     self-play, or current vs. a pool snapshot (current plays one random side).
     Only decisions made by the current network are kept for training."""
 
-    def __init__(self, model, pool, condition, n_envs, seed, p_selfplay=0.5, gamma=1.0, lam=0.95):
+    def __init__(self, model, pool, condition, n_envs, seed, p_selfplay=0.5, gamma=1.0, lam=0.95,
+                 talk=True, quest_bonus=0.2):
         if n_envs < 1:
             raise ValueError("n_envs must be positive")
         self.model, self.pool, self.condition = model, pool, condition
         self.rng = np.random.default_rng(seed)
-        self.envs = [AvalonEnv(seed * 10_000 + i) for i in range(n_envs)]
+        self.envs = [AvalonEnv(seed * 10_000 + i, talk=talk) for i in range(n_envs)]
         self.p_selfplay, self.gamma, self.lam = p_selfplay, gamma, lam
+        self.quest_bonus = quest_bonus  # reward per quest that goes a seat's way
         self.ctrl = [None] * n_envs
         self.traj = [None] * n_envs
         self.stats = defaultdict(int)
@@ -55,8 +57,10 @@ class Collector:
             if not t:
                 continue
             values = np.array([x[4] for x in t], dtype=np.float32)
-            rewards = np.zeros(len(t), dtype=np.float32)
-            rewards[-1] = env.reward(seat)
+            # Quests resolved after decision k and before k+1 pay out at k.
+            won = np.array([x[5] for x in t] + [env.quests_won(seat)], dtype=np.float32)
+            rewards = self.quest_bonus * np.diff(won)
+            rewards[-1] += env.reward(seat)
             adv = np.zeros(len(t), dtype=np.float32)
             last = 0.0
             for k in reversed(range(len(t))):
@@ -64,7 +68,7 @@ class Collector:
                 delta = rewards[k] + self.gamma * next_v - values[k]
                 last = delta + self.gamma * self.lam * last
                 adv[k] = last
-            for k, (o, m, a, lp, v) in enumerate(t):
+            for k, (o, m, a, lp, v, _) in enumerate(t):
                 out["obs"].append(o)
                 out["mask"].append(m)
                 out["act"].append(a)
@@ -106,7 +110,8 @@ class Collector:
                 for j, (i, seat, o, m) in enumerate(items):
                     actions[i] = int(a[j])
                     if ctrl is CURRENT:
-                        self.traj[i][seat].append((o, m, int(a[j]), float(logp[j]), float(values[j])))
+                        self.traj[i][seat].append((o, m, int(a[j]), float(logp[j]), float(values[j]),
+                                                   self.envs[i].quests_won(seat)))
             next_active = []
             for i in active:
                 env = self.envs[i]
@@ -135,6 +140,7 @@ class Collector:
 
 def ppo_update(model, opt, batch, epochs=4, minibatch=1024, clip=0.2, ent_coef=0.01,
                vf_coef=0.5, max_grad_norm=0.5):
+    """clip=None gives the plain policy gradient with a baseline (use epochs=1)."""
     n = len(batch["act"])
     adv = batch["adv"]
     adv = (adv - adv.mean()) / (adv.std() + 1e-8)
@@ -148,7 +154,10 @@ def ppo_update(model, opt, batch, epochs=4, minibatch=1024, clip=0.2, ent_coef=0
             logp = dist.log_prob(batch["act"][idx])
             ratio = torch.exp(logp - batch["logp"][idx])
             a = adv[idx]
-            pg_loss = -torch.min(ratio * a, ratio.clamp(1 - clip, 1 + clip) * a).mean()
+            if clip is None:
+                pg_loss = -(logp * a).mean()
+            else:
+                pg_loss = -torch.min(ratio * a, ratio.clamp(1 - clip, 1 + clip) * a).mean()
             v_loss = 0.5 * (v - batch["ret"][idx]).pow(2).mean()
             entropy = dist.entropy().mean()
             loss = pg_loss + vf_coef * v_loss - ent_coef * entropy
@@ -161,5 +170,5 @@ def ppo_update(model, opt, batch, epochs=4, minibatch=1024, clip=0.2, ent_coef=0
                 logs["v_loss"].append(v_loss.item())
                 logs["entropy"].append(entropy.item())
                 logs["approx_kl"].append((batch["logp"][idx] - logp).mean().item())
-                logs["clipfrac"].append(((ratio - 1).abs() > clip).float().mean().item())
+                logs["clipfrac"].append(((ratio - 1).abs() > (clip or 0.2)).float().mean().item())
     return {k: float(np.mean(v)) for k, v in logs.items()}

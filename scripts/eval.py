@@ -89,7 +89,8 @@ def main():
         model = ActorCritic()
         model.load_state_dict(torch.load(run / "model.pt"))
         for setup in ("A", "B"):
-            wins, n = setup_win_rate(model, cfg["condition"], setup, args.tier, args.games, seed=777)
+            wins, n = setup_win_rate(model, cfg["condition"], setup, args.tier, args.games, seed=777,
+                                     talk=cfg.get("talk", True), greedy=cfg.get("algo") == "dqn")
             lo, hi = wilson_ci(wins, n)
             rows.append(dict(condition=cfg["condition"], seed=cfg["seed"], run=run.name, setup=setup, wins=wins,
                              n=n, rate=wins / n, lo=lo, hi=hi))

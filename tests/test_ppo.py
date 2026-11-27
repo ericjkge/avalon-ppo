@@ -17,7 +17,7 @@ def test_rollouts_finish_under_one_policy_and_exclude_snapshot_seats(use_snapsho
         model.v.bias.fill_(-10)
     if use_snapshot:
         pool.maybe_add(1, model)
-    collector = Collector(model, pool, "none", 4, seed=0, p_selfplay=0, lam=1)
+    collector = Collector(model, pool, "none", 4, seed=0, p_selfplay=0, lam=1, quest_bonus=0)
     for version in (1, 2):
         with torch.no_grad():
             model.pi.bias[A_APPROVE] = version

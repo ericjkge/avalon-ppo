@@ -31,21 +31,21 @@ def test_mixed_tiers_finish():
 
 @pytest.mark.parametrize("tier", (MEDIUM, HARD))
 def test_good_proposer_includes_self(tier):
-    env = AvalonEnv(0).reset(roles=ROLES, leader=1)
+    env = AvalonEnv(0, talk=False).reset(roles=ROLES, leader=1)
     action = Bot(tier).act(env)
     team = next(t for t, i in TEAM_INDEX.items() if i == action)
     assert 1 in team
 
 
 def test_medium_merlin_rejects_evil_team():
-    env = AvalonEnv(0).reset(roles=ROLES, leader=1)
+    env = AvalonEnv(0, talk=False).reset(roles=ROLES, leader=1)
     env.step(TEAM_INDEX[(1, 3)])
     assert env.current_player() == 0
     assert Bot(MEDIUM).act(env) == A_REJECT
 
 
 def test_evil_approves_own_team():
-    env = AvalonEnv(0).reset(roles=ROLES, leader=1)
+    env = AvalonEnv(0, talk=False).reset(roles=ROLES, leader=1)
     env.step(TEAM_INDEX[(1, 3)])
     for _ in range(4):
         env.step(A_APPROVE)
@@ -54,7 +54,7 @@ def test_evil_approves_own_team():
 
 
 def test_only_one_evil_fails():
-    env = AvalonEnv(0).reset(roles=ROLES, leader=0)
+    env = AvalonEnv(0, talk=False).reset(roles=ROLES, leader=0)
     env.quest = 1  # a size-3 quest
     env.step(TEAM_INDEX[(0, 3, 4)])
     for _ in range(5):
